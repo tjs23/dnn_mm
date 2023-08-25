@@ -1,6 +1,33 @@
+import os, math, time
+import numpy as np
 import tensorflow as tf
+
 from tensorflow import keras
 from tensorflow.keras import layers
+from inspect import signature
+from collections import defaultdict
+
+def time_str(secs):
+ 
+  if secs < 500:
+    return f'{secs:5.1f}s'
+
+  else:
+    mins, secs = divmod(int(secs), 60)
+ 
+    if mins > 60:
+      hours, mins = divmod(mins, 60)
+      
+      if hours > 48:
+        days, hours =  divmod(hours, 24)
+        return f'{days}d{hours}h{mins}m{secs}s'
+      
+      else:
+        return f'{hours}h{mins}m{secs}s'
+        
+    else:
+      return f'{mins}m{secs}s'
+
 
 class ModelManager(object):
   """
@@ -29,20 +56,106 @@ class ModelManager(object):
     with self.strategy.scope():
       self.init_metrics()
       
+  def plot_training_history(self, *histories, file_path=None):
+    
+    from matplotlib import pyplot as plt
+    from matplotlib import cm
+    
+    def _get_line(label, vals):
+      texts = [label] + ['%.3e' % x for x in vals]
+      return '\t'.join(texts) + '\n'
+ 
+    cmap = cm.get_cmap('rainbow')
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+    fig.set_size_inches(16,8)
+    plot_options = {'linewidth':2, 'alpha':0.5} # for all charts
+ 
+    color_dict = {'accuracy':'#FF2000','recall':'#BBBB00','precision':'#0080FF'}
+ 
+    if file_path:
+      table_file = os.path.splitext(file_path)[0] + '.tsv'
+    else:
+      table_file = 'training_history.tsv'
+ 
+    with open(table_file, 'w') as out_file_obj:
+      write = out_file_obj.write
+ 
+      for i, history in enumerate(histories):
+        if isinstance(history, dict):
+          hd = history
+        else:
+          hd = history.history
+ 
+        n = len(hd['loss'])
+        epochs = np.arange(n) + 1
+        m = len(hd)
+ 
+        plot_options['color'] = cmap(float(i % 10)/10)
+ 
+        ax1.plot(epochs, hd['loss'], label='Train %d' % i,
+                 linestyle='--', **plot_options)
+        ax1.plot(epochs, hd['val_loss'], label='Test %d' % i,
+                 **plot_options)
+        ax1.set_title('Loss')
+        ax1.set_xlabel('Iteration')
+ 
+        write(_get_line('loss', hd['loss']))
+        write(_get_line('val_loss', hd['val_loss']))
+ 
+ 
+        for j, metric in enumerate(hd):
+ 
+          if 'loss' in metric:
+            continue
+ 
+          if 'val_' in metric:
+            linestyle = '-'
+            set_type = 'Test'
+            met_name = metric[4:]
+          else:
+            linestyle = '--'
+            set_type = 'Train'
+            met_name = metric
+ 
+          if i > 0:
+            label='%s %s %d' % (set_type, met_name, i)
+          else:
+            label='%s %s' % (set_type, met_name)
+ 
+          plot_options['color'] = cmap(float(j % m)/m)  # color_dict.get(met_name)
+          ax2.plot(epochs, hd[metric], label=label,  linestyle=linestyle, **plot_options)
+          write(_get_line(metric, hd[metric]))
+ 
+        ax2.set_title('Accuracy etc.')
+        ax2.set_xlabel('Iteration')
+        ax2.set_yticks(np.arange(0, 1.01, 0.05))
+        ax2.set_xticks(np.arange(0, n, 10))
 
-  def checkpoint(self, model_path, epoch):
+      ax1.legend()
+      ax2.legend()
+ 
+      ax1.grid(True, linewidth=0.5, alpha=0.5)
+      ax2.grid(True, linewidth=0.5, alpha=0.5)
+ 
+      if file_path:
+        plt.savefig(file_path, dpi=300)
+      else:
+        plt.show()
+
+  def checkpoint(self, model, model_path, epoch):
     """Overwrite in subclass"""
     
     if epoch and (epoch % 10 == 0):
       file_root, file_ext = os.path.splitext(model_path)
       save_path = f'{file_root}_EP{epoch+1}{file_ext}'
       model.save_weights(save_path)
-      util.info(f'Checkpoint {save_path}')
+      print(f'Checkpoint {save_path}')
   
   
   def get_generator(self, training=False, data_source=None):
     """Overwrite in subclass"""
-    pass    
+    
+    return None    
     
     
   def get_model(self):
@@ -162,8 +275,8 @@ class ModelManager(object):
  
     self.n_batches = int(math.ceil(self.data_generator.n_batches // self.num_replicas))
  
-    util.report(f'Num devices/GPUs used: {self.num_replicas}')
-    util.report(f'Batches: {self.n_batches:,} of global size {self.global_batch_size:,} from {self.data_generator.n_items:,} items')
+    print(f'Num devices/GPUs used: {self.num_replicas}')
+    print(f'Batches: {self.n_batches:,} of global size {self.global_batch_size:,} from {self.data_generator.n_items:,} items')
   
   
   def init_metrics(self):
@@ -194,7 +307,7 @@ class ModelManager(object):
      if acc_processor:
        acc_results = list(acc_processor(*acc_results))
      
-     batch_info = [epoch+1, self.n_epochs, batch+1, self.n_batches, util.time_str(t_taken), util.time_str(disp_time)]
+     batch_info = [epoch+1, self.n_epochs, batch+1, self.n_batches, time_str(t_taken), time_str(disp_time)]
      batch_info += [m[0].result() for m in self.loss_metrics] + acc_results
      
      if mean_dt: # Test/validation
@@ -204,10 +317,10 @@ class ModelManager(object):
          acc_results = list(acc_processor(*acc_results))
           
        batch_info += [m[1].result() for m in self.loss_metrics] + acc_results + [mean_dt]
-       util.report(self.report_line2.format(*batch_info), line_return=True)
+       print(self.report_line2.format(*batch_info))
      
      else:
-       util.report(self.report_line1.format(*batch_info), line_return=True)
+       print(self.report_line1.format(*batch_info))
   
   
   def transfer_compatible_weights(self, load_path, save_path):
@@ -216,7 +329,7 @@ class ModelManager(object):
     model.load_weights(load_path, by_name=True, skip_mismatch=True)
     model.save_weights(save_path)
    
-    util.info(f'Transferred compatible weights from {load_path} to {save_path}')
+    print(f'Transferred compatible weights from {load_path} to {save_path}')
        
   
   def infer(self, data_source, model_path):
@@ -225,7 +338,7 @@ class ModelManager(object):
     n = data_generator.n_items
     batch_size = data_generator.batch_size
  
-    util.info(f'Making inference for {n:,} items\n')
+    print(f'Making inference for {n:,} items\n')
     model = self.get_model()
     model.load_weights(model_path)
     pred_out = None
@@ -235,7 +348,7 @@ class ModelManager(object):
     
     i = 0
     for batch, (x_in, y_true, weights) in enumerate(data_generator):
-      util.info(f' .. {i:,}', line_return=True)
+      print(f' .. {i:,}')
       j = min(n, i+batch_size)
       y_pred = model(x_in, training=False)
       
@@ -270,7 +383,7 @@ class ModelManager(object):
 
       i = j
     
-    util.info(f'.. done\n')
+    print(f'.. done\n')
     return pred_out, true_out
    
    
@@ -300,7 +413,7 @@ class ModelManager(object):
       model = self.get_model()
  
       if os.path.exists(model_path):
-        util.report(f'Loading {model_path}')
+        print(f'Loading {model_path}')
         model.load_weights(model_path)
  
       optimizer = self.get_optimizer()
@@ -415,7 +528,7 @@ class ModelManager(object):
         m1.reset_states()
         m2.reset_states()
 
-    util.report('')
+    print('')
 
     model.save_weights(model_path)
  
@@ -423,7 +536,7 @@ class ModelManager(object):
  
     history_path = model_path_root + '_training.png'
  
-    util.plot_training_history(history, file_path=history_path)
+    self.plot_training_history(history, file_path=history_path)
 
 
    
