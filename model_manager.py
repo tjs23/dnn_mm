@@ -1,4 +1,4 @@
-import os, math, time
+import os, math, time, sys
 import numpy as np
 import tensorflow as tf
 
@@ -34,6 +34,9 @@ class ModelManager(object):
   Main Model Manager class
   
   """
+  
+  _prev_print_width = 0
+  
   def __init__(self, n_gpu, report_interval=1.0):
     
     self.report_interval = report_interval
@@ -55,6 +58,37 @@ class ModelManager(object):
     
     with self.strategy.scope():
       self.init_metrics()
+  
+  
+  def _print(self, msg):
+    
+    if msg.endswith('\r'):
+      msg = msg[:-1].ljust(self._prev_print_width) + '\r' # Extend to cover prev
+      self._prev_print_width = len(msg)    
+      sys.stdout.write(msg)
+      sys.stdout.flush()
+ 
+    else:
+      print(msg)
+      self._prev_print_width = 0
+ 
+ 
+  def info(self, msg):
+
+    _print('INFO: ' + msg)
+ 
+ 
+  def warn(self, msg):
+
+    _print('WARN: ' + msg)
+
+
+  def critical(self, msg):
+
+    _print('STOP')
+    _print('EXIT: ' + msg)
+    sys.exit(0)
+  
       
   def plot_training_history(self, *histories, file_path=None):
     
@@ -149,7 +183,7 @@ class ModelManager(object):
       file_root, file_ext = os.path.splitext(model_path)
       save_path = f'{file_root}_EP{epoch+1}{file_ext}'
       model.save_weights(save_path)
-      print(f'Checkpoint {save_path}')
+      self._print(f'Checkpoint {save_path}')
   
   
   def get_generator(self, training=False, data_source=None):
@@ -275,8 +309,8 @@ class ModelManager(object):
  
     self.n_batches = int(math.ceil(self.data_generator.n_batches // self.num_replicas))
  
-    print(f'Num devices/GPUs used: {self.num_replicas}')
-    print(f'Batches: {self.n_batches:,} of global size {self.global_batch_size:,} from {self.data_generator.n_items:,} items')
+    self._print(f'Num devices/GPUs used: {self.num_replicas}')
+    self._print(f'Batches: {self.n_batches:,} of global size {self.global_batch_size:,} from {self.data_generator.n_items:,} items')
   
   
   def init_metrics(self):
@@ -317,10 +351,10 @@ class ModelManager(object):
          acc_results = list(acc_processor(*acc_results))
           
        batch_info += [m[1].result() for m in self.loss_metrics] + acc_results + [mean_dt]
-       print(self.report_line2.format(*batch_info))
+       self._print(self.report_line2.format(*batch_info))
      
      else:
-       print(self.report_line1.format(*batch_info))
+       self._print(self.report_line1.format(*batch_info) + '\r')
   
   
   def transfer_compatible_weights(self, load_path, save_path):
@@ -329,7 +363,7 @@ class ModelManager(object):
     model.load_weights(load_path, by_name=True, skip_mismatch=True)
     model.save_weights(save_path)
    
-    print(f'Transferred compatible weights from {load_path} to {save_path}')
+    self._print(f'Transferred compatible weights from {load_path} to {save_path}')
        
   
   def infer(self, data_source, model_path):
@@ -338,7 +372,7 @@ class ModelManager(object):
     n = data_generator.n_items
     batch_size = data_generator.batch_size
  
-    print(f'Making inference for {n:,} items\n')
+    self._print(f'Making inference for {n:,} items\n')
     model = self.get_model()
     model.load_weights(model_path)
     pred_out = None
@@ -348,7 +382,7 @@ class ModelManager(object):
     
     i = 0
     for batch, (x_in, y_true, weights) in enumerate(data_generator):
-      print(f' .. {i:,}')
+      self._print(f' .. {i:,}\r')
       j = min(n, i+batch_size)
       y_pred = model(x_in, training=False)
       
@@ -383,7 +417,7 @@ class ModelManager(object):
 
       i = j
     
-    print(f'.. done\n')
+    self._print(f'.. done {i}\n')
     return pred_out, true_out
    
    
@@ -413,7 +447,7 @@ class ModelManager(object):
       model = self.get_model()
  
       if os.path.exists(model_path):
-        print(f'Loading {model_path}')
+        self._print(f'Loading {model_path}')
         model.load_weights(model_path)
  
       optimizer = self.get_optimizer()
@@ -468,7 +502,6 @@ class ModelManager(object):
     interval = self.report_interval
     
     for epoch in range(n_epochs):
-      print('')
  
       for m1, m2 in all_metrics:
         m1.reset_states()
@@ -528,7 +561,7 @@ class ModelManager(object):
         m1.reset_states()
         m2.reset_states()
 
-    print('')
+    self._print('Finalizing')
 
     model.save_weights(model_path)
  
