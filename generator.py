@@ -7,7 +7,7 @@ class BaseGenerator(tf.keras.utils.Sequence):
   A sequence 
   """  
   
-  def __init__(self, batch_size, training, n_items):
+  def __init__(self, batch_size, training, n_items, n_replicas=1):
   
     self.n_items = n_items
     self.n_batches = int(math.ceil(n_items/batch_size))
@@ -18,6 +18,7 @@ class BaseGenerator(tf.keras.utils.Sequence):
     self.training = training
     self.idx = 0
     self.n_items = n_items
+    self.n_replicas = n_replicas
     
     outputs = next(self._iter_func())
     
