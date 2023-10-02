@@ -7,6 +7,27 @@ from tensorflow.keras import layers
 from inspect import signature
 from collections import defaultdict
 
+ESC_END = '\033[0m'
+ESC_BOLD = '\033[1m'
+ESC_ITALIC = '\033[2m'
+ESC_UNDERLINE = '\033[3m'
+ESC_BLACK = '\033[30m'
+ESC_RED = '\033[31m'
+ESC_GREEN = '\033[32m'
+ESC_YELLOW = '\033[33m'
+ESC_BLUE = '\033[34m'
+ESC_MAGENTA = '\033[35m'
+ESC_CYAN = '\033[36m'
+ESC_WHITE = '\033[37m'
+ESC_GREY = '\033[90m'
+ESC_LT_RED = '\033[91m'
+ESC_LT_GREEN = '\033[92m'
+ESC_LT_YELLOW = '\033[93m'
+ESC_LT_BLUE = '\033[94m'
+ESC_LT_MAGENTA = '\033[95m'
+ESC_LT_CYAN = '\033[96m'
+ESC_LT_WHITE = '\033[97m'
+
 def time_str(secs):
  
   if secs < 500:
@@ -34,9 +55,7 @@ class ModelManager(object):
   Main Model Manager class
   
   """
-  
-  _prev_print_width = 0
-  
+
   def __init__(self, n_gpu, report_interval=1.0):
     
     self.report_interval = report_interval
@@ -50,9 +69,10 @@ class ModelManager(object):
     self.n_batches = None
     self.epoch = 0
     self.n_epoces = None
+    self._prev_print_width = 0
     
-    self.data_generator = self.get_generator()
-    self.data_generator_test = self.get_generator(training=False)
+    self.data_generator = self.get_generator(n_replicas=n_gpu)
+    self.data_generator_test = self.get_generator(training=False, n_replicas=n_gpu)
     
     self.init_strategy(n_gpu)
     
@@ -63,30 +83,34 @@ class ModelManager(object):
   def _print(self, msg):
     
     if msg.endswith('\r'):
-      msg = msg[:-1].ljust(self._prev_print_width) + '\r' # Extend to cover prev
-      self._prev_print_width = len(msg)    
-      sys.stdout.write(msg)
-      sys.stdout.flush()
- 
+      msg = msg.rstrip()
+      pad = ' ' * min(0, self._prev_print_width-len(msg)) 
+      msg = msg + pad + '\r' # Extend to cover prev
+      self._prev_print_width = len(msg) + 1
+    
     else:
-      print(msg)
+      pad = ' ' * min(0, self._prev_print_width-len(msg)) 
+      msg = msg.rstrip() + pad + '\n'
       self._prev_print_width = 0
+    
+    sys.stdout.write(msg)
+    sys.stdout.flush()
  
  
   def info(self, msg):
 
-    _print('INFO: ' + msg)
+    self._print(ESC_LT_BLUE + 'MM INFO: ' + ESC_END + msg)
  
  
   def warn(self, msg):
 
-    _print('WARN: ' + msg)
+    self._print(ESC_YELLOW + 'MM WARN: '  + ESC_END + msg)
 
 
   def critical(self, msg):
 
-    _print('STOP')
-    _print('EXIT: ' + msg)
+    self._print(ESC_RED + 'MM STOP' + ESC_END)
+    self._print(ESC_RED + 'MM EXIT: '  + ESC_END + msg)
     sys.exit(0)
   
       
@@ -126,17 +150,14 @@ class ModelManager(object):
  
         plot_options['color'] = cmap(float(i % 10)/10)
  
-        ax1.plot(epochs, hd['loss'], label='Train %d' % i,
-                 linestyle='--', **plot_options)
-        ax1.plot(epochs, hd['val_loss'], label='Test %d' % i,
-                 **plot_options)
+        ax1.plot(epochs, hd['loss'], label='Train %d' % i, linestyle='--', **plot_options)
+        ax1.plot(epochs, hd['val_loss'], label='Test %d' % i,**plot_options)
         ax1.set_title('Loss')
         ax1.set_xlabel('Iteration')
  
         write(_get_line('loss', hd['loss']))
         write(_get_line('val_loss', hd['val_loss']))
- 
- 
+  
         for j, metric in enumerate(hd):
  
           if 'loss' in metric:
@@ -186,7 +207,7 @@ class ModelManager(object):
       self._print(f'Checkpoint {save_path}')
   
   
-  def get_generator(self, training=False, data_source=None):
+  def get_generator(self, training=False, data_source=None, n_replicas=1):
     """Overwrite in subclass"""
     
     return None    
@@ -251,7 +272,7 @@ class ModelManager(object):
     pos_encoding[:, :, 1::2] = np.cos(pos_terms[:,1::2])
 
     return tf.constant(pos_encoding, dtype=tf.float32)
-
+        
 
   def normal_noise(self, x, stddev=0.05):
  
@@ -308,21 +329,22 @@ class ModelManager(object):
       self.global_batch_size = self.data_generator.batch_size
  
     self.n_batches = int(math.ceil(self.data_generator.n_batches // self.num_replicas))
- 
-    self._print(f'Num devices/GPUs used: {self.num_replicas}')
-    self._print(f'Batches: {self.n_batches:,} of global size {self.global_batch_size:,} from {self.data_generator.n_items:,} items')
+   
+    self.info(f'Num devices/GPUs used: {ESC_CYAN}{self.num_replicas}{ESC_END}')
+    self.info(f'Batches: {ESC_CYAN}{self.n_batches:,}{ESC_END} of global size {ESC_MAGENTA}{self.global_batch_size:,}{ESC_END} from {ESC_YELLOW}{self.data_generator.n_items:,}{ESC_END} items')
   
   
   def init_metrics(self):
     
     loss_names = self.get_loss_names()
     acc_names = self.get_acc_names()
-    
-    loss_str = ' '.join(['%s:{:7.5f}' % name for name in loss_names])
-    acc_str = ' '.join(['%s:{:5.3f}' % name for name in acc_names])
+
+     
+    loss_str = ' '.join([ESC_YELLOW + name + ':' + ESC_END + '{:7.5f}' for name in loss_names])
+    acc_str = ' '.join([ESC_CYAN + name + ':' + ESC_END + '{:5.3f}' for name in acc_names])
  
-    self.report_line1 = 'EP:{:3d}/{:3d} B:{:3d}/{:3d} T:{}/{} ' + loss_str + ' ' + acc_str
-    self.report_line2 = self.report_line1 + ' VAL: ' + loss_str + ' ' + acc_str + ' dT:{:5.1f}ms'
+    self.report_line1 = ESC_RED + 'EP:' + ESC_END + '{:3d}/{:3d} ' + ESC_RED + 'B:' + ESC_END + '{:3d}/{:3d} ' + ESC_LT_BLUE + 'T:' + ESC_END + '{}/{} ' + loss_str + ' ' + acc_str
+    self.report_line2 = self.report_line1 + ESC_RED + ' VAL '+ ESC_END + loss_str + ' ' + acc_str + ESC_LT_BLUE + ' dT:' + ESC_END + '{:5.1f}ms'
     
     loss_met = keras.metrics.Mean
     
@@ -335,26 +357,26 @@ class ModelManager(object):
   
   def _report(self, epoch, batch, t_taken, disp_time, mean_dt=None):
      
-     acc_processor = self.get_acc_processor_func()
-     acc_results = [m[0].result() for m in self.acc_metrics]
-     
-     if acc_processor:
-       acc_results = list(acc_processor(*acc_results))
-     
-     batch_info = [epoch+1, self.n_epochs, batch+1, self.n_batches, time_str(t_taken), time_str(disp_time)]
-     batch_info += [m[0].result() for m in self.loss_metrics] + acc_results
-     
-     if mean_dt: # Test/validation
-       acc_results = [m[1].result() for m in self.acc_metrics]
-       
-       if acc_processor:
-         acc_results = list(acc_processor(*acc_results))
-          
-       batch_info += [m[1].result() for m in self.loss_metrics] + acc_results + [mean_dt]
-       self._print(self.report_line2.format(*batch_info))
-     
-     else:
-       self._print(self.report_line1.format(*batch_info) + '\r')
+    acc_processor = self.get_acc_processor_func()
+    acc_results = [m[0].result() for m in self.acc_metrics]
+    
+    if acc_processor:
+      acc_results = list(acc_processor(*acc_results))
+    
+    batch_info = [epoch+1, self.n_epochs, batch+1, self.n_batches, time_str(t_taken), time_str(disp_time)]
+    batch_info += [m[0].result() for m in self.loss_metrics] + acc_results
+    
+    if mean_dt: # Test/validation
+      acc_results = [m[1].result() for m in self.acc_metrics]
+      
+      if acc_processor:
+        acc_results = list(acc_processor(*acc_results))
+         
+      batch_info += [m[1].result() for m in self.loss_metrics] + acc_results + [mean_dt]
+      self._print(self.report_line2.format(*batch_info))
+    
+    else:
+      self._print(self.report_line1.format(*batch_info) + '\r')
   
   
   def transfer_compatible_weights(self, load_path, save_path):
@@ -372,7 +394,7 @@ class ModelManager(object):
     n = data_generator.n_items
     batch_size = data_generator.batch_size
  
-    self._print(f'Making inference for {n:,} items\n')
+    self.info(f'Making inference for {ESC_YELLOW}{n:,}{ESC_END} items')
     model = self.get_model()
     model.load_weights(model_path)
     pred_out = None
@@ -417,12 +439,20 @@ class ModelManager(object):
 
       i = j
     
-    self._print(f'.. done {i}\n')
+    self._print(f'.. done {i}')
     return pred_out, true_out
    
    
   def train(self, n_epochs, model_path):
     
+    
+    model_exists = os.path.exists(model_path)
+    if model_exists:
+      msg = f'Train {model_path} for {ESC_MAGENTA}{n_epochs}{ESC_END} epochs (exists = {ESC_LT_RED}{os.path.exists(model_path)}{ESC_END})'
+    else:
+      msg = f'Train {model_path} for {ESC_MAGENTA}{n_epochs}{ESC_END} epochs (exists = {ESC_LT_BLUE}{os.path.exists(model_path)}{ESC_END})'
+    
+    self.info(msg)
     self.n_epochs = n_epochs
     
     acc_func      = self.get_acc_func()
@@ -447,7 +477,7 @@ class ModelManager(object):
       model = self.get_model()
  
       if os.path.exists(model_path):
-        self._print(f'Loading {model_path}')
+        self.info(f'Loading {ESC_LT_RED}{model_path}{ESC_END}')
         model.load_weights(model_path)
  
       optimizer = self.get_optimizer()
@@ -497,8 +527,6 @@ class ModelManager(object):
     mean_dt = 0
     history = defaultdict(list)
 
-    #self.data_generator.on_epoch_end()
-    #self.data_generator_test.on_epoch_end()
     interval = self.report_interval
     
     for epoch in range(n_epochs):
@@ -561,7 +589,7 @@ class ModelManager(object):
         m1.reset_states()
         m2.reset_states()
 
-    self._print('Finalizing')
+    self.info('Finalizing')
 
     model.save_weights(model_path)
  
